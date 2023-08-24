@@ -1,11 +1,16 @@
 import requests
-from bs4 import BeautifulSoup   
 import re
+import time
+
+from bs4 import BeautifulSoup   
 from selenium import webdriver
+from selenium.webdriver import Chrome 
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from webdriver_manager.chrome import ChromeDriverManager
 
 
 class Season20222023:
@@ -38,6 +43,38 @@ class Season20222023:
             results.append(fixture_data)
         return results
     
+    def extract_svg_data(self, link):
+        options = webdriver.ChromeOptions()
+        options.add_argument('--headless=new')
+        
+        options.page_load_strategy = 'none'
+        # options.add_experimental_option("detach", True)
+        
+        chrome_path = ChromeDriverManager().install() 
+        chrome_service = Service(chrome_path)
+        
+        driver = Chrome(options=options, service=chrome_service) 
+        
+        driver.get(link)
+        
+        driver.implicitly_wait(10)
+        
+        driver.switch_to.frame("sp_message_iframe_758392")
+        
+        # Assuming the "Accept" button has a CSS selector like ".accept-cookies"
+        accept_button = driver.find_element(By.CSS_SELECTOR, ".sp_message-accept-button")
+        accept_button.click()
+        
+        driver.switch_to.default_content()
+        svg_container = driver.find_element(By.CSS_SELECTOR, ".sdc-site-opta-widget")
+        driver.execute_script("arguments[0].scrollIntoView();", svg_container)
+  
+        time.sleep(10)
+        
+        content = driver.find_element(By.CSS_SELECTOR, ".Opta-Normal")
+        driver.quit()
+        return content
+    
     def get_match_details(self, link, fixture_data_dict):
         reponse = requests.get(link)
         text = reponse.text
@@ -62,15 +99,17 @@ class Season20222023:
         fixture_data_dict["HomeEvents"] = self.get_match_major_events(events_ul=home_events_ul)
         fixture_data_dict["AwayEvents"] = self.get_match_major_events(events_ul=away_events_ul)
         
-    
+        content = self.extract_svg_data(link=link)
+        print(content)
+
         
         svg_data = html_data.find("svg", attrs={"class": "Opta-Responsive-Svg"})
-        print(html_data.prettify())
+        # print(html_data.prettify())
         
         home_starting_players = html_data.find_all("g", attrs={"class": "Opta-Node Opta-Home Opta-Starter"})
         home_susbstitutes = html_data.find_all("div", attrs={"class":"Opta-Sub Opta-Home"})
-        print(home_starting_players)
-        print(home_susbstitutes)
+        # print(home_starting_players)
+        # print(home_susbstitutes)
         
         # fixture_data_dict["HomePlayers"] = self.get_team_players(starting_eleven_list=home_starting_players)
         
