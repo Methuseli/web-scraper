@@ -1,5 +1,6 @@
 import requests
 import re
+import time
 
 from bs4 import BeautifulSoup, NavigableString, Tag   
 from selenium import webdriver
@@ -41,7 +42,7 @@ class Season20222023:
             results.append(fixture_data)
         return results
     
-    def extract_svg_data(self, link: str) -> str:
+    def extract_svg_data(self, link: str) -> Tuple[str, str]:
         options = webdriver.ChromeOptions()
         options.add_argument('--headless=new')
         
@@ -65,17 +66,22 @@ class Season20222023:
             
         except NoSuchElementException as e:
             print(f"{e}", "------------>>> Closing connection")
-            exit()
+            
         
         driver.switch_to.default_content()
         svg_container = driver.find_element(By.CSS_SELECTOR, ".sdc-site-opta-widget")
         driver.execute_script("arguments[0].scrollIntoView();", svg_container)
   
-        # time.sleep(10)
-        
-        content = driver.find_element(By.CSS_SELECTOR, ".Opta-Responsive-Svg").get_attribute("outerHTML")
-        driver.quit()
-        return content
+        time.sleep(5)
+        try:
+            substitute_table = driver.find_element(By.CSS_SELECTOR, ".Opta-Subs-Wrap").get_attribute("outerHTML")
+            
+            content = driver.find_element(By.CSS_SELECTOR, ".Opta-Responsive-Svg").get_attribute("outerHTML")
+            driver.quit()
+            return content, substitute_table
+        except NoSuchElementException as e:
+            print(f"{e}", "-------------->>> Closing connection")
+            return "", ""
     
     def get_match_details(self, link: str, fixture_data_dict: Dict) -> Dict:
         reponse = requests.get(link)
@@ -101,15 +107,15 @@ class Season20222023:
         fixture_data_dict["HomeEvents"] = self.get_match_major_events(events_ul=home_events_ul)
         fixture_data_dict["AwayEvents"] = self.get_match_major_events(events_ul=away_events_ul)
         
-        content = self.extract_svg_data(link=link)
+        content, substitute_table = self.extract_svg_data(link=link)
 
-        home_player_stats, away_player_stats = self.get_team_players(content=content)
+        home_player_stats, away_player_stats = self.get_team_players(content=content, substitute_content=substitute_table)
         
         
         fixture_data_dict["AwayPlayersStatistics"] = away_player_stats
         fixture_data_dict["HomePlayersStatistics"] = home_player_stats
         
-        print(fixture_data_dict)
+        # print(fixture_data_dict)
         
         return fixture_data_dict
     
@@ -179,33 +185,38 @@ class Season20222023:
         }
         return major_events
     
-    def get_team_players(self, content: str) -> Tuple[Dict, Dict]:
+    def get_team_players(self, content: str, substitute_content: str) -> Tuple[Dict, Dict]:
         home_starting_eleven = []
         away_starting_eleven = []
         home_substitutes = []
         away_substitutes = []
         
         svg_data = BeautifulSoup(content, "html.parser")
+        substitutes = BeautifulSoup(substitute_content, "html.parser")
         
         home_starting_players = svg_data.find_all("g", attrs={"class": "Opta-Node Opta-Home Opta-Starter"})
-        home_susbstitutes_players = svg_data.find_all("div", attrs={"class":"Opta-Sub Opta-Home"})
+        target_class_names = ["Opta-Sub", "Opta-Home"]
+        home_susbstitutes_players = [div for div in substitutes.find_all('div') if any(class_name in div.get('class', []) for class_name in target_class_names)]
         
         away_starting_players = svg_data.find_all("g", attrs={"class": "Opta-Node Opta-Away Opta-Starter"})
-        away_substitutes_players = svg_data.find_all("div", attrs={"class":"Opta-Sub Opta-Away"})
+        target_class_names = ["Opta-Sub", "Opta-Away"]
+        away_substitutes_players = [div for div in substitutes.find_all('div') if any(class_name in div.get('class', []) for class_name in target_class_names)]
         
         for player in home_starting_players:
             player_info = self.extract_player_game_info(player=player)
             home_starting_eleven.append(player_info)
         
         for substitute in home_susbstitutes_players:
-            pass
+            player_info = self.extract_substitute_player_game_info(player=substitute)
+            home_substitutes.append(player_info)
         
         for player in away_starting_players:
             player_info = self.extract_player_game_info(player=player)
             away_starting_eleven.append(player_info)
             
         for substitute in away_substitutes_players:
-            pass
+            player_info = self.extract_substitute_player_game_info(player=substitute)
+            away_substitutes.append(player_info)
         
         home_player_statistics = {
             "StartingEleven": home_starting_eleven,
@@ -217,6 +228,10 @@ class Season20222023:
             "Substitutes": away_substitutes
         }
         
+        print("Away ______________________________ \n", away_substitutes)
+        print("-----------------------------------------------------")
+        print("Home ________________________________\n", home_substitutes)
+        
         return home_player_statistics, away_player_statistics
         
     def extract_player_game_info(self, player: Tag | NavigableString | None) -> Dict:
@@ -224,7 +239,7 @@ class Season20222023:
         player_stats_tag = player.find_all("div", attrs={"class": "Opta-Stat"})
         
         target_class_names = ["Opta-MatchEvent", "Opta-Soft"]
-        player_events_tag = [div for div in player.find_all('li') if any(class_name in div.get('class', []) for class_name in target_class_names)]
+        player_events_tag = [li for li in player.find_all('li') if any(class_name in li.get('class', []) for class_name in target_class_names)]
         # print(player_events_tag)
         player_game_info = {}
         
@@ -247,7 +262,6 @@ class Season20222023:
             player_game_info["PlayerStats"].append(player_game_stat)
         
         for event in player_events_tag:
-            print(event.find("span", attrs={"class": "Opta-Event-Time"}).get_text())
             player_event_info = {
                 "EventType": event.find("span", attrs={"class": "Opta-Event-Text-Type"}).get_text(),
                 "EventTime": event.find("span", attrs={"class": "Opta-Event-Time"}).get_text().replace("\u200e", "")
@@ -258,7 +272,45 @@ class Season20222023:
         # print("----------------------------------------------->")
         # print(player_stats_tag)
         return player_game_info
+    
+    def extract_substitute_player_game_info(self, player: Tag | NavigableString | None) -> Dict:
+        player_name = player.find_all("span", attrs={"class": "Opta-PlayerName"})
+        player_stats_tag = player.find_all("div", attrs={"class": "Opta-Stat"})
         
+        target_class_names = ["Opta-MatchEvent", "Opta-Soft"]
+        player_events_tag = [li for li in player.find_all('li') if any(class_name in li.get('class', []) for class_name in target_class_names)]
+        # print(player_events_tag)
+        player_game_info = {}
+        
+        
+        player_info = ""
+        for player in player_name:
+            player_info = player_info + " " + player.get_text()
+        
+        player_game_info = {
+            "PlayerName": player_info.strip(),
+            "PlayerStats": [],
+            "Events": []
+        }
+        
+        for stat in player_stats_tag:
+            player_game_stat = {
+                "Label": stat.find("div", attrs={"class": "Opta-Label"}).get_text(),
+                "Value": stat.find("div", attrs={"class": "Opta-Value Opta-JS-NumberAnimation"}).get_text(),
+            }
+            player_game_info["PlayerStats"].append(player_game_stat)
+        
+        for event in player_events_tag:
+            player_event_info = {
+                "EventType": event.find("span", attrs={"class": "Opta-Event-Text-Type"}).get_text(),
+                "EventTime": event.find("span", attrs={"class": "Opta-Event-Time"}).get_text().replace("\u200e", "")
+            }
+            player_game_info["Events"].append(player_event_info)
+        
+        # player_events = 
+        # print("----------------------------------------------->")
+        # print(player_stats_tag)
+        return player_game_info
         
         
 
