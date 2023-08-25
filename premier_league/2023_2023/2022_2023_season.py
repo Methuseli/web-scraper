@@ -42,9 +42,12 @@ class Season20222023:
             results.append(fixture_data)
         return results
     
-    def extract_svg_data(self, link: str) -> Tuple[str, str]:
+    def extract_svg_data(self, link: str) -> Tuple[str, str, str]:
+        content = ""
+        substitute_table = ""
+        team_statistics = ""
         options = webdriver.ChromeOptions()
-        options.add_argument('--headless=new')
+        # options.add_argument('--headless=new')
         
         options.page_load_strategy = 'none'
         # options.add_experimental_option("detach", True)
@@ -69,19 +72,39 @@ class Season20222023:
             
         
         driver.switch_to.default_content()
-        svg_container = driver.find_element(By.CSS_SELECTOR, ".sdc-site-opta-widget")
+        svg_container = driver.find_element(By.XPATH, "/html/body/div[8]/div[3]/div/div[1]/div[2]/div[6]")
         driver.execute_script("arguments[0].scrollIntoView();", svg_container)
-  
-        time.sleep(5)
+        
+        driver.implicitly_wait(10)
+        
+        statistics_container = driver.find_element(By.XPATH, "/html/body/div[8]/div[3]/div/div[1]/div[2]/div[14]")
+        driver.execute_script("arguments[0].scrollIntoView();", statistics_container)
+        
+        # time.sleep(10)
+        driver.implicitly_wait(5)
+        
+        try:
+            team_statistics = driver.find_element(By.CSS_SELECTOR, ".Opta-TabbedContent").get_attribute("outerHTML")
+        except NoSuchElementException as e:
+            print(f"{e}", "------------>>> Closing connection")
+            
+            
+        driver.implicitly_wait(10)
         try:
             substitute_table = driver.find_element(By.CSS_SELECTOR, ".Opta-Subs-Wrap").get_attribute("outerHTML")
-            
-            content = driver.find_element(By.CSS_SELECTOR, ".Opta-Responsive-Svg").get_attribute("outerHTML")
-            driver.quit()
-            return content, substitute_table
+            # driver.quit()
         except NoSuchElementException as e:
-            print(f"{e}", "-------------->>> Closing connection")
-            return "", ""
+            print(f"{e}", "------------>>> Closing connection")
+            
+        driver.implicitly_wait(10)
+        try:
+            content = driver.find_element(By.CSS_SELECTOR, ".Opta-Responsive-Svg").get_attribute("outerHTML")
+        except NoSuchElementException as e:
+            print(f"{e}", "------------>>> Closing connection")
+            
+            
+        driver.quit()
+        return content, substitute_table, team_statistics        
     
     def get_match_details(self, link: str, fixture_data_dict: Dict) -> Dict:
         reponse = requests.get(link)
@@ -107,7 +130,7 @@ class Season20222023:
         fixture_data_dict["HomeEvents"] = self.get_match_major_events(events_ul=home_events_ul)
         fixture_data_dict["AwayEvents"] = self.get_match_major_events(events_ul=away_events_ul)
         
-        content, substitute_table = self.extract_svg_data(link=link)
+        content, substitute_table, team_statistics = self.extract_svg_data(link=link)
 
         home_player_stats, away_player_stats = self.get_team_players(content=content, substitute_content=substitute_table)
         
@@ -115,9 +138,41 @@ class Season20222023:
         fixture_data_dict["AwayPlayersStatistics"] = away_player_stats
         fixture_data_dict["HomePlayersStatistics"] = home_player_stats
         
+        home_team_statistics, away_team_statistics = self.get_team_statistics(team_statistics=team_statistics)
+        
+        fixture_data_dict["HomeTeamStatistics"] = home_team_statistics
+        fixture_data_dict["AwayTeamStatistics"] = away_team_statistics
+        
         # print(fixture_data_dict)
         
         return fixture_data_dict
+    
+    def get_team_statistics(self, team_statistics: Tag | NavigableString | None) -> Tuple[Dict, Dict]:
+        home_team_statistics = {}
+        away_team_statistics = {}
+        
+        
+        team_statistics_data = BeautifulSoup(team_statistics, "html.parser")
+        
+        statisics_list = team_statistics_data.find_all("table", attrs={"class":"Opta-Stats-Bars"})
+        # print(statisics_list)
+        
+        for statisics in statisics_list:
+            statisics_row = statisics.find_all("tr")
+            print(statisics_row)
+            for i in range(0, len(statisics_row), 2):
+                key_name = statisics_row[i].get_text().strip().replace(" ", "")
+                target_class_names = ["Opta-Outer"]
+                values = [td for td in statisics_row[i+1].find_all('td') if any(class_name in td.get('class', []) for class_name in target_class_names)]
+                home_team_statistics[f"Home{key_name}"] = values[0].get_text().strip()
+                away_team_statistics[f"Away{key_name}"] = values[1].get_text().strip()
+                
+        print(home_team_statistics)
+        print("------------------------------------------->>> <<<----------------------------------------")
+        print(away_team_statistics)
+        print("------------------------------------------->>> <<<----------------------------------------")
+        
+        return home_team_statistics, away_team_statistics
     
     def get_match_major_events(self, events_ul: Tag | NavigableString | None) -> Dict:
         major_events = {}
@@ -228,9 +283,9 @@ class Season20222023:
             "Substitutes": away_substitutes
         }
         
-        print("Away ______________________________ \n", away_substitutes)
-        print("-----------------------------------------------------")
-        print("Home ________________________________\n", home_substitutes)
+        # print("Away ______________________________ \n", away_substitutes)
+        # print("-----------------------------------------------------")
+        # print("Home ________________________________\n", home_substitutes)
         
         return home_player_statistics, away_player_statistics
         
